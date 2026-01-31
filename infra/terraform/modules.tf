@@ -97,3 +97,55 @@ module "cloudfront" {
 
   depends_on = [module.acm, module.s3]
 }
+
+# -----------------------------------------------------------------------------
+# ECR Module
+# -----------------------------------------------------------------------------
+
+module "ecr" {
+  source = "./modules/ecr"
+
+  project_name = var.project_name
+  environment  = var.environment
+  tags         = local.common_tags
+}
+
+# -----------------------------------------------------------------------------
+# ECS Module
+# -----------------------------------------------------------------------------
+
+module "ecs" {
+  source = "./modules/ecs"
+
+  project_name       = var.project_name
+  environment        = var.environment
+  aws_region         = var.aws_region
+  vpc_id             = module.vpc.vpc_id
+  public_subnet_ids  = module.vpc.public_subnet_ids
+  private_subnet_ids = module.vpc.private_subnet_ids
+  certificate_arn    = module.acm.certificate_arn
+  ecr_frontend_url   = module.ecr.frontend_url
+  ecr_backend_url    = module.ecr.backend_url
+
+  frontend_cpu           = var.environment == "prod" ? 512 : 256
+  frontend_memory        = var.environment == "prod" ? 1024 : 512
+  backend_cpu            = var.environment == "prod" ? 512 : 256
+  backend_memory         = var.environment == "prod" ? 1024 : 512
+  frontend_desired_count = var.environment == "prod" ? 3 : 1
+  backend_desired_count  = var.environment == "prod" ? 3 : 1
+
+  tags = local.common_tags
+
+  depends_on = [module.vpc, module.acm, module.ecr]
+}
+
+# -----------------------------------------------------------------------------
+# S3 Artifacts Module (Security Reports Storage)
+# -----------------------------------------------------------------------------
+
+module "s3_artifacts" {
+  source = "./modules/s3-artifacts"
+
+  project_name = var.project_name
+  tags         = local.common_tags
+}

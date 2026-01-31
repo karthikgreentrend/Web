@@ -100,3 +100,17 @@ output "certificate_arn" {
   description = "ACM certificate ARN"
   value       = module.acm.certificate_arn
 }
+
+# -----------------------------------------------------------------------------
+# S3 Artifacts Outputs (Security Reports)
+# -----------------------------------------------------------------------------
+
+output "artifacts_bucket_name" {
+  description = "S3 bucket name for security artifacts"
+  value       = module.s3_artifacts.bucket_name
+}
+
+output "artifacts_bucket_arn" {
+  description = "S3 bucket ARN for security artifacts"
+  value       = module.s3_artifacts.bucket_arn
+}

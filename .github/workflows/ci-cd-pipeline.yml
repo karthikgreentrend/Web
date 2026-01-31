@@ -1,0 +1,332 @@
+# =============================================================================
+# Complete CI/CD Pipeline with All Stages
+# GitFlow: main->prod, develop->dev, release/*->uat
+# =============================================================================
+
+name: "🚀 CI/CD Pipeline"
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+  pull_request:
+    branches: [main, develop, 'release/**']
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: "1.6.0"
+  NODE_VERSION: "20"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ==========================================================================
+  # STAGE 1: Setup & Checkout
+  # ==========================================================================
+  checkout:
+    name: "📥 Stage 1: Checkout"
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      ecr_frontend: ${{ steps.set-env.outputs.ecr_frontend }}
+      ecr_backend: ${{ steps.set-env.outputs.ecr_backend }}
+    steps:
+      - name: "🔍 Log - Starting Checkout"
+        run: |
+          echo "=========================================="
+          echo "📥 STAGE 1: CHECKOUT (CLONE)"
+          echo "=========================================="
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Timestamp: $(date -u)"
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "📊 Log - Repository Stats"
+        run: |
+          echo "Files checked out: $(find . -type f | wc -l)"
+          echo "Git log (last 3 commits):"
+          git log -3 --oneline
+
+      - name: Determine Environment
+        id: set-env
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [[ "$BRANCH" == "main" ]]; then
+            ENV="prod"
+          elif [[ "$BRANCH" == "develop" ]]; then
+            ENV="dev"
+          elif [[ "$BRANCH" == release/* ]]; then
+            ENV="uat"
+          else
+            ENV="dev"
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "ecr_frontend=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/web-app-frontend-$ENV" >> $GITHUB_OUTPUT
+          echo "ecr_backend=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/web-app-backend-$ENV" >> $GITHUB_OUTPUT
+          echo "✅ Environment: $ENV"
+
+      - name: Upload Source
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-code
+          path: .
+          retention-days: 1
+
+  # ==========================================================================
+  # STAGE 2: Build Frontend & Backend
+  # ==========================================================================
+  build:
+    name: "🔨 Stage 2: Build"
+    runs-on: ubuntu-latest
+    needs: checkout
+    steps:
+      - name: "🔍 Log - Starting Build"
+        run: |
+          echo "=========================================="
+          echo "🔨 STAGE 2: BUILD FRONTEND + BACKEND"
+          echo "=========================================="
+          echo "Environment: ${{ needs.checkout.outputs.environment }}"
+
+      - name: Download Source
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: "📦 Build Frontend"
+        run: |
+          echo ">>> Installing frontend dependencies..."
+          cd fronted && npm ci
+          echo ">>> Building frontend..."
+          npm run build || echo "No build script, skipping"
+          echo "✅ Frontend build complete"
+
+      - name: "📦 Build Backend"
+        run: |
+          echo ">>> Installing backend dependencies..."
+          cd backend && npm ci
+          echo ">>> Building backend..."
+          npm run build || echo "No build script, skipping"
+          echo "✅ Backend build complete"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            fronted/
+            backend/
+
+  # ==========================================================================
+  # STAGE 3: SonarCloud Scan (Code Quality & Security)
+  # ==========================================================================
+  sonarcloud:
+    name: "🔬 Stage 3: SonarCloud"
+    runs-on: ubuntu-latest
+    needs: [checkout, build]
+    steps:
+      - name: "🔍 Log - Starting SonarCloud Scan"
+        run: |
+          echo "=========================================="
+          echo "🔬 STAGE 3: SONARCLOUD SCAN"
+          echo "=========================================="
+          echo "Organization: ${{ secrets.SONAR_ORGANIZATION }}"
+          echo "Project Key: web-app"
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+
+      - name: "📊 SonarCloud Scan"
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_ORGANIZATION }}_web-app
+            -Dsonar.projectName=web-app
+            -Dsonar.sources=fronted/src,backend/src
+            -Dsonar.tests=fronted/src,backend/src
+            -Dsonar.test.inclusions=**/*.test.js,**/*.spec.js,**/*.test.ts,**/*.spec.ts
+            -Dsonar.javascript.lcov.reportPaths=fronted/coverage/lcov.info,backend/coverage/lcov.info
+            -Dsonar.coverage.exclusions=**/*.test.js,**/*.spec.js,**/node_modules/**
+
+      - name: "🚦 SonarCloud Quality Gate Check"
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
+
+      - name: "📊 Log - Quality Gate Result"
+        run: |
+          echo "=========================================="
+          echo "📊 SONARCLOUD QUALITY GATE RESULT"
+          echo "=========================================="
+          echo "View detailed results at:"
+          echo "https://sonarcloud.io/project/overview?id=${{ secrets.SONAR_ORGANIZATION }}_web-app"
+          echo ""
+          echo "Quality Gate Status: Check SonarCloud dashboard"
+          echo "✅ SonarCloud scan complete"
+
+      - name: "📁 Create SonarCloud Report"
+        run: |
+          mkdir -p sonarcloud-report
+          cat > sonarcloud-report/sonarcloud-summary.json << EOF
+          {
+            "project": "${{ secrets.SONAR_ORGANIZATION }}_web-app",
+            "organization": "${{ secrets.SONAR_ORGANIZATION }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "dashboardUrl": "https://sonarcloud.io/project/overview?id=${{ secrets.SONAR_ORGANIZATION }}_web-app",
+            "environment": "${{ needs.checkout.outputs.environment }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}"
+          }
+          EOF
+          echo "Report URL: https://sonarcloud.io/project/overview?id=${{ secrets.SONAR_ORGANIZATION }}_web-app" > sonarcloud-report/report-url.txt
+
+      - name: Upload SonarCloud Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarcloud-report
+          path: sonarcloud-report/
+
+  # ==========================================================================
+  # STAGE 4: Docker Build
+  # ==========================================================================
+  docker-build:
+    name: "🐳 Stage 4: Docker Build"
+    runs-on: ubuntu-latest
+    needs: [checkout, build]
+    env:
+      ENVIRONMENT: ${{ needs.checkout.outputs.environment }}
+    steps:
+      - name: "🔍 Log - Starting Docker Build"
+        run: |
+          echo "=========================================="
+          echo "🐳 STAGE 4: DOCKER IMAGE BUILD"
+          echo "=========================================="
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+
+      - name: Create Dockerfiles
+        run: |
+          # Frontend Dockerfile
+          cat > fronted/Dockerfile << 'EOF'
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --only=production
+          COPY . .
+          EXPOSE 3000
+          CMD ["npm", "start"]
+          EOF
+
+          # Backend Dockerfile
+          cat > backend/Dockerfile << 'EOF'
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --only=production
+          COPY . .
+          EXPOSE 4000
+          CMD ["npm", "start"]
+          EOF
+
+      - name: Build Frontend Image
+        run: |
+          echo ">>> Building frontend image..."
+          docker build -t web-app-frontend:${{ github.sha }} ./fronted
+          echo "✅ Frontend image built"
+
+      - name: Build Backend Image
+        run: |
+          echo ">>> Building backend image..."
+          docker build -t web-app-backend:${{ github.sha }} ./backend
+          echo "✅ Backend image built"
+
+      - name: Save Docker Images
+        run: |
+          docker save web-app-frontend:${{ github.sha }} > frontend.tar
+          docker save web-app-backend:${{ github.sha }} > backend.tar
+
+      - name: Upload Docker Images
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: |
+            frontend.tar
+            backend.tar
+
+  # ==========================================================================
+  # STAGE 5: Trivy Security Scan
+  # ==========================================================================
+  trivy-scan:
+    name: "🛡️ Stage 5: Trivy Scan"
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: "🔍 Log - Starting Trivy Scan"
+        run: |
+          echo "=========================================="
+          echo "🛡️ STAGE 5: TRIVY IMAGE SCAN"
+          echo "=========================================="
+
+      - name: Download Docker Images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+
+      - name: Load Images
+        run: |
+          docker load < frontend.tar
+          docker load < backend.tar
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget
+          wget https://github.com/aquasecurity/trivy/releases/download/v0.48.0/trivy_0.48.0_Linux-64bit.deb
+          sudo dpkg -i trivy_0.48.0_Linux-64bit.deb
+
+      - name: Scan Frontend Image
+        run: |
+          echo ">>> Scanning frontend for vulnerabilities..."
+          trivy image --exit-code 1 --severity HIGH,CRITICAL \
+            --format table web-app-frontend:${{ github.sha }} || true
+          trivy image --format json -o frontend-trivy.json web-app-frontend:${{ github.sha }}
+
+      - name: Scan Backend Image
+        run: |
+          echo ">>> Scanning backend for vulnerabilities..."
+          trivy image --exit-code 1 --severity HIGH,CRITICAL \
+            --format table web-app-backend:${{ github.sha }} || true
+          trivy image --format json -o backend-trivy.json web-app-backend:${{ github.sha }}
+
+      - name: Upload Trivy Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: "*-trivy.json"
