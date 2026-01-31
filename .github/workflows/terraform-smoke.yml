@@ -1,0 +1,24 @@
+name: Terraform Smoke Test
+
+on:
+  push:
+    paths:
+      - 'Web/infra/terraform/**'
+  pull_request:
+    paths:
+      - 'Web/infra/terraform/**'
+
+jobs:
+  terraform-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      - name: Run smoke tests
+        run: |
+          chmod +x Web/infra/terraform/scripts/smoke_test.sh
+          ./Web/infra/terraform/scripts/smoke_test.sh

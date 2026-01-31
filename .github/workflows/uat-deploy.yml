@@ -1,0 +1,32 @@
+name: UAT Deployment
+
+on:
+  push:
+    branches:
+      - release/**
+    paths:
+      - 'Web/infra/terraform/**'
+  pull_request:
+    branches:
+      - release/**
+    types: [closed]
+    paths:
+      - 'Web/infra/terraform/**'
+
+jobs:
+  deploy-uat:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'release/x.y.z' && github.event.pull_request.head.ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      - name: Init & Apply UAT
+        working-directory: Web/infra/terraform/envs/uat
+        run: |
+          terraform init -backend-config=backend.tf
+          terraform plan -var-file=terraform.tfvars
+          terraform apply -auto-approve -var-file=terraform.tfvars
