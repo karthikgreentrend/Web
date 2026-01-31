@@ -1,0 +1,7 @@
+# =============================================================================
+# Backend Bootstrap - Example Variables
+# Copy this file to terraform.tfvars and update values
+# =============================================================================
+
+project_name = "greentrend"
+aws_region   = "us-east-1"
