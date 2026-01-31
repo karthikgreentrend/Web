@@ -137,9 +137,20 @@ jobs:
         working-directory: Web/fronted
         run: npm install
 
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml, ctype, json, bcmath, tokenizer
+          coverage: none
+
       - name: Install backend dependencies
         working-directory: Web/backend
-        run: npm install || echo "No package.json found in backend folder, skipping npm install."
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Run backend tests
+        working-directory: Web/backend
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
