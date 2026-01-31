@@ -64,6 +64,20 @@ jobs:
             ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           echo "✅ ECR login successful"
 
+      - name: Run PHPUnit tests
+        working-directory: backend
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
+      - name: Trivy Scan Backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: web-app-backend:${{ github.event.workflow_run.head_sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
       - name: Load & Push Images
         run: |
           ENV="${{ steps.env.outputs.environment }}"
@@ -74,14 +88,16 @@ jobs:
           docker load < backend.tar
 
           echo ">>> Tagging and pushing frontend..."
-          docker tag web-app-frontend:$SHA $ECR_BASE/web-app-frontend-$ENV:$SHA
-          docker tag web-app-frontend:$SHA $ECR_BASE/web-app-frontend-$ENV:latest
-          docker push $ECR_BASE/web-app-frontend-$ENV:$SHA
-          docker push $ECR_BASE/web-app-frontend-$ENV:latest
-
-          echo ">>> Tagging and pushing backend..."
-          docker tag web-app-backend:$SHA $ECR_BASE/web-app-backend-$ENV:$SHA
+            echo ">>> Tagging and pushing frontend (PHP)..."
+            docker build -t web-app-frontend:$SHA -f frontend/Dockerfile frontend/
+            docker tag web-app-frontend:$SHA $ECR_BASE/web-app-frontend-$ENV:$SHA
+            docker tag web-app-frontend:$SHA $ECR_BASE/web-app-frontend-$ENV:latest
+            docker push $ECR_BASE/web-app-frontend-$ENV:$SHA
+            docker push $ECR_BASE/web-app-frontend-$ENV:latest
           docker tag web-app-backend:$SHA $ECR_BASE/web-app-backend-$ENV:latest
+            echo ">>> Tagging and pushing backend (PHP)..."
+            # Ensure backend image is built from backend/Dockerfile (PHP)
+            docker build -t web-app-backend:$SHA -f backend/Dockerfile backend/
           docker push $ECR_BASE/web-app-backend-$ENV:$SHA
           docker push $ECR_BASE/web-app-backend-$ENV:latest
 

@@ -14,6 +14,26 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+  phpunit:
+    name: "🧪 PHPUnit Tests"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml, ctype, json, bcmath, tokenizer
+          coverage: none
+      - name: Install backend dependencies
+        working-directory: backend
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+      - name: Run PHPUnit tests
+        working-directory: backend
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
   # ==========================================================================
   # Setup Environment Detection
   # ==========================================================================
@@ -85,13 +105,9 @@ jobs:
       - name: "📁 Prepare OWASP Report"
         run: |
           mkdir -p owasp-zap-report
-
-          # Move generated reports
           mv report_html.html owasp-zap-report/ 2>/dev/null || true
           mv report_json.json owasp-zap-report/ 2>/dev/null || true
           mv report_md.md owasp-zap-report/ 2>/dev/null || true
-
-          # Create summary
           cat > owasp-zap-report/zap-summary.json << EOF
           {
             "scanType": "baseline",
@@ -102,7 +118,6 @@ jobs:
             "branch": "${{ github.event.workflow_run.head_branch }}"
           }
           EOF
-
           echo "✅ OWASP ZAP scan complete"
 
       - name: Upload OWASP Report
@@ -279,43 +294,6 @@ jobs:
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "commit": "${{ github.event.workflow_run.head_sha }}",
             "branch": "${{ github.event.workflow_run.head_branch }}",
-            "artifacts": {
-              "sonarcloud": "sonarcloud-report/",
-              "trivy": "trivy-reports/",
-              "owasp-zap": "owasp-zap-report/",
-              "lighthouse": "lighthouse-report/",
-              "tflint": "tflint-report/"
-            },
-            "s3Location": "${S3_PATH}/"
-          }
-          EOF
-
-          aws s3 cp index.json "${S3_PATH}/index.json" || true
-
-          echo ""
-          echo "=========================================="
-          echo "✅ ALL ARTIFACTS UPLOADED TO S3"
-          echo "=========================================="
-          echo "Location: ${S3_PATH}/"
-          echo ""
-          echo "Artifacts stored:"
-          echo "  📊 SonarCloud:  ${S3_PATH}/sonarcloud-report/"
-          echo "  🛡️ Trivy:       ${S3_PATH}/trivy-reports/"
-          echo "  🔐 OWASP ZAP:   ${S3_PATH}/owasp-zap-report/"
-          echo "  💡 Lighthouse:  ${S3_PATH}/lighthouse-report/"
-          echo "  📝 TFLint:      ${S3_PATH}/tflint-report/"
-
-  # ==========================================================================
-  # STAGE 14: Smoke Tests
-  # ==========================================================================
-  smoke-tests:
-    name: "🧪 Stage 14: Smoke Tests"
-    runs-on: ubuntu-latest
-    needs: [setup, upload-to-s3]
-    env:
-      ENV: ${{ needs.setup.outputs.environment }}
-      TARGET: ${{ needs.setup.outputs.target_url }}
-    steps:
       - name: "🔍 Log - Starting Smoke Tests"
         run: |
           echo "=========================================="
