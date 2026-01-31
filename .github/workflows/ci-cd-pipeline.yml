@@ -113,13 +113,20 @@ jobs:
           npm run build || echo "No build script, skipping"
           echo "✅ Frontend build complete"
 
-      - name: "📦 Build Backend"
-        run: |
-          echo ">>> Installing backend dependencies..."
-          cd backend && npm ci
-          echo ">>> Building backend..."
-          npm run build || echo "No build script, skipping"
-          echo "✅ Backend build complete"
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml, ctype, json, bcmath, tokenizer
+          coverage: none
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Run backend tests
+        working-directory: backend
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
