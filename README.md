@@ -1,4 +1,4 @@
-# GreenTrend Web Application
+# HCL Hackathon Web Application
 
 A full-stack web application with infrastructure as code, following GitFlow deployment strategy.
 
