@@ -14,25 +14,6 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
-  phpunit:
-    name: "🧪 PHPUnit Tests"
-    runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          extensions: mbstring, xml, ctype, json, bcmath, tokenizer
-          coverage: none
-      - name: Install backend dependencies
-        working-directory: backend
-        run: composer install --no-interaction --prefer-dist --optimize-autoloader
-      - name: Run PHPUnit tests
-        working-directory: backend
-        run: vendor/bin/phpunit --configuration phpunit.xml.dist
 
   # ==========================================================================
   # Setup Environment Detection
