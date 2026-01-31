@@ -34,3 +34,23 @@ create_certificate = true
 
 # CloudFront
 cloudfront_price_class = "PriceClass_100"
+
+# Aurora
+aurora_master_username = "admin"
+aurora_master_password = "changeme123!"
+aurora_database_name   = "appdb"
+
+# OpenSearch
+opensearch_access_policies = <<POLICY
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Principal": {"AWS": "*"},
+			"Action": "es:*",
+			"Resource": "*"
+		}
+	]
+}
+POLICY
