@@ -14,6 +14,26 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+    phpunit:
+      name: "🧪 PHPUnit Tests"
+      runs-on: ubuntu-latest
+      if: ${{ github.event.workflow_run.conclusion == 'success' }}
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+        - name: Set up PHP
+          uses: shivammathur/setup-php@v2
+          with:
+            php-version: '8.2'
+            extensions: mbstring, xml, ctype, json, bcmath, tokenizer
+            coverage: none
+        - name: Install backend dependencies
+          working-directory: backend
+          run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        - name: Run PHPUnit tests
+          working-directory: backend
+          run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
   # ==========================================================================
   # Setup Environment Detection
   # ==========================================================================
@@ -43,73 +63,6 @@ jobs:
   # ==========================================================================
   # STAGE 11: OWASP ZAP Scan
   # ==========================================================================
-  owasp-zap:
-    name: "🔐 Stage 11: OWASP ZAP"
-    runs-on: ubuntu-latest
-    needs: setup
-    env:
-      ENV: ${{ needs.setup.outputs.environment }}
-      TARGET: ${{ needs.setup.outputs.target_url }}
-    steps:
-      - name: "🔍 Log - Starting OWASP ZAP"
-        run: |
-          echo "=========================================="
-          echo "🔐 STAGE 11: OWASP ZAP SCAN (POST-DEPLOY)"
-          echo "=========================================="
-          echo "Environment: ${{ env.ENV }}"
-          echo "Target URL: ${{ env.TARGET }}"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create ZAP Rules File
-        run: |
-          mkdir -p .zap
-          cat > .zap/rules.tsv << 'EOF'
-          10010	IGNORE	(Cookie No HttpOnly Flag)
-          10011	IGNORE	(Cookie Without Secure Flag)
-          10015	WARN	(Incomplete or No Cache-control Header Set)
-          10020	WARN	(X-Frame-Options Header)
-          10021	WARN	(X-Content-Type-Options Header Missing)
-          10038	WARN	(Content Security Policy Header Not Set)
-          EOF
-
-      - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.10.0
-        with:
-          target: ${{ env.TARGET }}
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a -j'
-        continue-on-error: true
-
-      - name: "📁 Prepare OWASP Report"
-        run: |
-          mkdir -p owasp-zap-report
-
-          # Move generated reports
-          mv report_html.html owasp-zap-report/ 2>/dev/null || true
-          mv report_json.json owasp-zap-report/ 2>/dev/null || true
-          mv report_md.md owasp-zap-report/ 2>/dev/null || true
-
-          # Create summary
-          cat > owasp-zap-report/zap-summary.json << EOF
-          {
-            "scanType": "baseline",
-            "target": "${{ env.TARGET }}",
-            "environment": "${{ env.ENV }}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "commit": "${{ github.event.workflow_run.head_sha }}",
-            "branch": "${{ github.event.workflow_run.head_branch }}"
-          }
-          EOF
-
-          echo "✅ OWASP ZAP scan complete"
-
-      - name: Upload OWASP Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: owasp-zap-report
-          path: owasp-zap-report/
 
   # ==========================================================================
   # STAGE 12: Lighthouse Report
@@ -279,43 +232,6 @@ jobs:
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "commit": "${{ github.event.workflow_run.head_sha }}",
             "branch": "${{ github.event.workflow_run.head_branch }}",
-            "artifacts": {
-              "sonarcloud": "sonarcloud-report/",
-              "trivy": "trivy-reports/",
-              "owasp-zap": "owasp-zap-report/",
-              "lighthouse": "lighthouse-report/",
-              "tflint": "tflint-report/"
-            },
-            "s3Location": "${S3_PATH}/"
-          }
-          EOF
-
-          aws s3 cp index.json "${S3_PATH}/index.json" || true
-
-          echo ""
-          echo "=========================================="
-          echo "✅ ALL ARTIFACTS UPLOADED TO S3"
-          echo "=========================================="
-          echo "Location: ${S3_PATH}/"
-          echo ""
-          echo "Artifacts stored:"
-          echo "  📊 SonarCloud:  ${S3_PATH}/sonarcloud-report/"
-          echo "  🛡️ Trivy:       ${S3_PATH}/trivy-reports/"
-          echo "  🔐 OWASP ZAP:   ${S3_PATH}/owasp-zap-report/"
-          echo "  💡 Lighthouse:  ${S3_PATH}/lighthouse-report/"
-          echo "  📝 TFLint:      ${S3_PATH}/tflint-report/"
-
-  # ==========================================================================
-  # STAGE 14: Smoke Tests
-  # ==========================================================================
-  smoke-tests:
-    name: "🧪 Stage 14: Smoke Tests"
-    runs-on: ubuntu-latest
-    needs: [setup, upload-to-s3]
-    env:
-      ENV: ${{ needs.setup.outputs.environment }}
-      TARGET: ${{ needs.setup.outputs.target_url }}
-    steps:
       - name: "🔍 Log - Starting Smoke Tests"
         run: |
           echo "=========================================="

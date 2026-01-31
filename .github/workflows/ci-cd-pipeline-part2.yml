@@ -64,6 +64,20 @@ jobs:
             ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           echo "✅ ECR login successful"
 
+      - name: Run PHPUnit tests
+        working-directory: backend
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
+      - name: Trivy Scan Backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: web-app-backend:${{ github.event.workflow_run.head_sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
       - name: Load & Push Images
         run: |
           ENV="${{ steps.env.outputs.environment }}"
