@@ -1,0 +1,106 @@
+# =============================================================================
+# CI/CD Pipeline - Security Artifacts Upload to S3
+# Uploads: SonarCloud, Trivy, OWASP, Lighthouse, TFLint reports
+# S3 Structure: s3://bucket/{dev|uat|prod}/{date}/{artifact-type}/
+# =============================================================================
+
+name: "📦 Upload Security Artifacts"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      run_id:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_ACCOUNT_ID:
+        required: true
+
+env:
+  AWS_REGION: us-east-1
+  ARTIFACTS_BUCKET: web-app-security-artifacts
+
+jobs:
+  upload-artifacts:
+    name: "📤 Upload to S3"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🔍 Log - Starting Artifact Upload"
+        run: |
+          echo "=========================================="
+          echo "📦 UPLOADING SECURITY ARTIFACTS TO S3"
+          echo "=========================================="
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Run ID: ${{ inputs.run_id }}"
+          echo "Timestamp: $(date -u)"
+          echo ""
+          echo "S3 Path: s3://${{ env.ARTIFACTS_BUCKET }}/${{ inputs.environment }}/$(date +%Y-%m-%d)/${{ inputs.run_id }}/"
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./all-artifacts
+
+      - name: "📊 List Downloaded Artifacts"
+        run: |
+          echo ">>> Downloaded artifacts:"
+          find ./all-artifacts -type f | head -50
+
+      - name: "☁️ Upload to S3"
+        run: |
+          ENV="${{ inputs.environment }}"
+          DATE=$(date +%Y-%m-%d)
+          RUN_ID="${{ inputs.run_id }}"
+          BUCKET="${{ secrets.AWS_ACCOUNT_ID }}-${{ env.ARTIFACTS_BUCKET }}"
+          BASE_PATH="s3://${BUCKET}/${ENV}/${DATE}/${RUN_ID}"
+
+          echo ">>> Uploading artifacts to ${BASE_PATH}/"
+
+          # Upload all artifacts with proper folder structure
+          aws s3 sync ./all-artifacts "${BASE_PATH}/" \
+            --metadata "run-id=${RUN_ID},environment=${ENV},date=${DATE}"
+
+          echo "✅ All artifacts uploaded to S3"
+          echo ""
+          echo "📁 Artifact Location: ${BASE_PATH}/"
+
+      - name: "📋 Generate Artifact Index"
+        run: |
+          ENV="${{ inputs.environment }}"
+          DATE=$(date +%Y-%m-%d)
+          RUN_ID="${{ inputs.run_id }}"
+          BUCKET="${{ secrets.AWS_ACCOUNT_ID }}-${{ env.ARTIFACTS_BUCKET }}"
+
+          # Create index.json
+          cat > index.json << EOF
+          {
+            "environment": "${ENV}",
+            "date": "${DATE}",
+            "runId": "${RUN_ID}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "artifacts": {
+              "sonarcloud": "sonarcloud-report/",
+              "trivy": "trivy-reports/",
+              "owasp-zap": "zap-report/",
+              "lighthouse": "lighthouse-report/",
+              "tflint": "tflint-report/"
+            }
+          }
+          EOF
+
+          aws s3 cp index.json "s3://${BUCKET}/${ENV}/${DATE}/${RUN_ID}/index.json"
+          echo "✅ Artifact index created"

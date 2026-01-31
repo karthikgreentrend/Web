@@ -1,0 +1,219 @@
+# =============================================================================
+# GitHub Actions - Application Deployment Pipeline
+# Deploys frontend to S3/CloudFront after Terraform infrastructure is ready
+# =============================================================================
+
+name: "Deploy Application"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'release/**'
+    paths:
+      - 'fronted/**'
+      - 'backend/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+
+env:
+  NODE_VERSION: '20'
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ==========================================================================
+  # Set Environment Based on Branch (GitFlow)
+  # ==========================================================================
+  setup:
+    name: "Setup Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - name: Determine Environment
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+            if [[ "$BRANCH_NAME" == "main" ]]; then
+              echo "environment=prod" >> $GITHUB_OUTPUT
+            elif [[ "$BRANCH_NAME" == "develop" ]]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+            elif [[ "$BRANCH_NAME" == release/* ]]; then
+              echo "environment=uat" >> $GITHUB_OUTPUT
+            else
+              echo "environment=dev" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # ==========================================================================
+  # Build Frontend
+  # ==========================================================================
+  build-frontend:
+    name: "Build Frontend"
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: fronted/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: ./fronted
+
+      - name: Build Application
+        run: npm run build
+        working-directory: ./fronted
+        env:
+          REACT_APP_ENV: ${{ env.ENVIRONMENT }}
+          NODE_ENV: production
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ env.ENVIRONMENT }}
+          path: fronted/build/
+          retention-days: 5
+
+  # ==========================================================================
+  # Build Backend
+  # ==========================================================================
+  build-backend:
+    name: "Build Backend"
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: ./backend
+
+      - name: Run Tests
+        run: npm test --if-present
+        working-directory: ./backend
+        continue-on-error: true
+
+      - name: Build Application
+        run: npm run build --if-present
+        working-directory: ./backend
+
+  # ==========================================================================
+  # Deploy to S3/CloudFront
+  # ==========================================================================
+  deploy:
+    name: "Deploy to ${{ needs.setup.outputs.environment }}"
+    runs-on: ubuntu-latest
+    needs: [setup, build-frontend]
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+      url: https://${{ needs.setup.outputs.environment == 'prod' && 'example.com' || format('{0}.example.com', needs.setup.outputs.environment) }}
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build-${{ env.ENVIRONMENT }}
+          path: ./build
+
+      - name: Get S3 Bucket Name
+        id: get-bucket
+        run: |
+          # Get bucket name from Terraform state or use naming convention
+          BUCKET_NAME="web-app-${{ env.ENVIRONMENT }}-hosting"
+
+          # Try to find the actual bucket
+          ACTUAL_BUCKET=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, 'web-app-${{ env.ENVIRONMENT }}-hosting')].Name | [0]" --output text)
+
+          if [[ "$ACTUAL_BUCKET" != "None" && -n "$ACTUAL_BUCKET" ]]; then
+            echo "bucket_name=$ACTUAL_BUCKET" >> $GITHUB_OUTPUT
+          else
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync ./build s3://${{ steps.get-bucket.outputs.bucket_name }} \
+            --delete \
+            --cache-control "max-age=31536000" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # Upload index.html and JSON files with no-cache
+          aws s3 sync ./build s3://${{ steps.get-bucket.outputs.bucket_name }} \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --include "index.html" \
+            --include "*.json"
+
+      - name: Get CloudFront Distribution ID
+        id: get-cloudfront
+        run: |
+          # Get CloudFront distribution ID associated with the origin
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Origins.Items[?contains(DomainName, '${{ steps.get-bucket.outputs.bucket_name }}')]].Id | [0]" \
+            --output text)
+          echo "distribution_id=$DISTRIBUTION_ID" >> $GITHUB_OUTPUT
+
+      - name: Invalidate CloudFront Cache
+        if: steps.get-cloudfront.outputs.distribution_id != '' && steps.get-cloudfront.outputs.distribution_id != 'None'
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.get-cloudfront.outputs.distribution_id }} \
+            --paths "/*"
+
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Complete 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| S3 Bucket | ${{ steps.get-bucket.outputs.bucket_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CloudFront ID | ${{ steps.get-cloudfront.outputs.distribution_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed At | $(date -u +"%Y-%m-%d %H:%M:%S UTC") |" >> $GITHUB_STEP_SUMMARY
