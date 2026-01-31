@@ -1,3 +1,12 @@
+# -----------------------------------------------------------------------------
+# OpenSearch Variables
+# -----------------------------------------------------------------------------
+
+variable "opensearch_access_policies" {
+  description = "Access policy JSON for OpenSearch domain"
+  type        = string
+  default     = ""
+}
 # =============================================================================
 # Variables Configuration
 # =============================================================================
@@ -139,4 +148,24 @@ variable "certificate_arn" {
   description = "Existing ACM certificate ARN (required if create_certificate is false)"
   type        = string
   default     = ""
+}
+
+# -----------------------------------------------------------------------------
+# Aurora Variables
+# -----------------------------------------------------------------------------
+
+variable "aurora_master_username" {
+  description = "Aurora master username"
+  type        = string
+}
+
+variable "aurora_master_password" {
+  description = "Aurora master password"
+  type        = string
+  sensitive   = true
+}
+
+variable "aurora_database_name" {
+  description = "Aurora initial database name"
+  type        = string
 }

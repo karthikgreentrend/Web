@@ -41,3 +41,8 @@ output "private_route_table_id" {
   description = "Private route table ID"
   value       = aws_route_table.private.id
 }
+
+output "default_db_sg_id" {
+  description = "Default security group for DB/Cache/Search"
+  value       = aws_vpc.main.default_security_group_id
+}

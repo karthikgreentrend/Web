@@ -175,6 +175,69 @@ module "s3_artifacts" {
 }
 
 # -----------------------------------------------------------------------------
+# Aurora Module (RDS Aurora Cluster)
+# -----------------------------------------------------------------------------
+
+module "aurora" {
+  source = "./modules/aurora"
+
+  cluster_identifier      = "${var.project_name}-${var.environment}-aurora"
+  engine                  = "aurora-mysql"
+  engine_version          = "8.0.mysql_aurora.3.04.0"
+  master_username         = var.aurora_master_username
+  master_password         = var.aurora_master_password
+  database_name           = var.aurora_database_name
+  vpc_security_group_ids  = [module.vpc.default_db_sg_id]
+  db_subnet_group_name    = "${var.project_name}-${var.environment}-aurora-subnet-group"
+  subnet_ids              = module.vpc.private_subnet_ids
+  instance_count          = 2
+  instance_class          = "db.r6g.large"
+  publicly_accessible     = false
+
+  depends_on = [module.vpc]
+}
+
+# -----------------------------------------------------------------------------
+# ElastiCache Module (Redis)
+# -----------------------------------------------------------------------------
+
+module "elasticache" {
+  source = "./modules/elasticache"
+
+  cluster_id           = "${var.project_name}-${var.environment}-redis"
+  engine               = "redis"
+  node_type            = "cache.t3.micro"
+  num_cache_nodes      = 1
+  parameter_group_name = "default.redis7"
+  port                 = 6379
+  subnet_group_name    = "${var.project_name}-${var.environment}-redis-subnet-group"
+  subnet_ids           = module.vpc.private_subnet_ids
+  security_group_ids   = [module.vpc.default_db_sg_id]
+
+  depends_on = [module.vpc]
+}
+
+# -----------------------------------------------------------------------------
+# OpenSearch Module
+# -----------------------------------------------------------------------------
+
+module "opensearch" {
+  source = "./modules/opensearch"
+
+  domain_name        = "${var.project_name}-${var.environment}-os"
+  engine_version     = "OpenSearch_2.11"
+  instance_type      = "t3.small.search"
+  instance_count     = 1
+  volume_size        = 10
+  volume_type        = "gp3"
+  subnet_ids         = module.vpc.private_subnet_ids
+  security_group_ids = [module.vpc.default_db_sg_id]
+  access_policies    = var.opensearch_access_policies
+
+  depends_on = [module.vpc]
+}
+
+# -----------------------------------------------------------------------------
 # Route53 DNS Records for CloudFront (created after CloudFront is ready)
 # -----------------------------------------------------------------------------
 
