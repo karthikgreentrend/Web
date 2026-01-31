@@ -1,0 +1,32 @@
+name: DEV Deployment
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'Web/infra/terraform/**'
+  pull_request:
+    branches:
+      - develop
+    types: [closed]
+    paths:
+      - 'Web/infra/terraform/**'
+
+jobs:
+  deploy-dev:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'feature/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      - name: Init & Apply DEV
+        working-directory: Web/infra/terraform/envs/dev
+        run: |
+          terraform init -backend-config=backend.tf
+          terraform plan -var-file=terraform.tfvars
+          terraform apply -auto-approve -var-file=terraform.tfvars
